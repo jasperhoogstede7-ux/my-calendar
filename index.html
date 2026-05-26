@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>My Calendar</title>
+  <link rel="manifest" href="/manifest.json" />
+  <meta name="theme-color" content="#7F77DD" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Calendar" />
+  <link rel="apple-touch-icon" href="/icon-192.png" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root { min-height: 100vh; background: #0f0f1a; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; color: #e8e8f0; }
+    input, button { font-family: inherit; }
+    input[type="text"], input[type="date"], input[type="time"] {
+      background: #111118; border: 0.5px solid rgba(255,255,255,0.15);
+      border-radius: 7px; color: #e8e8f0; font-size: 14px;
+      padding: 9px 11px; width: 100%; outline: none; color-scheme: dark;
+    }
+    input::placeholder { color: #5a5a72; }
+    input:focus { border-color: rgba(127,119,221,0.6); }
+    ::-webkit-scrollbar { width: 0; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script>
+const SURL = 'https://phwvtzditshrojwokcwz.supabase.co';
+const SKEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBod3Z0emRpdHNocm9qd29rY3d6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk2OTkxNzMsImV4cCI6MjA5NTI3NTE3M30.ELEyJxyYfXPMqWfPC3Go4Q952NJYlzB-M8-8grpPTNU';
+const db = window.supabase.createClient(SURL, SKEY);
+
+const { useState, useMemo, useCallback, useEffect } = React;
+
+const COLORS = [
+  { id:'blue',   accent:'#378ADD', bg:'#0C447C', text:'#B5D4F4' },
+  { id:'teal',   accent:'#1D9E75', bg:'#085041', text:'#9FE1CB' },
+  { id:'green',  accent:'#639922', bg:'#27500A', text:'#C0DD97' },
+  { id:'amber',  accent:'#EF9F27', bg:'#633806', text:'#FAC775' },
+  { id:'coral',  accent:'#D85A30', bg:'#712B13', text:'#F5C4B3' },
+  { id:'purple', accent:'#7F77DD', bg:'#3C3489', text:'#CECBF6' },
+  { id:'pink',   accent:'#D4537E', bg:'#72243E', text:'#F4C0D1' },
+];
+const CMAP = Object.fromEntries(COLORS.map(c => [c.id, c]));
+const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const MONTHS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+function toDS(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function getWeek(off) {
+  const t = new Date(); t.setHours(0,0,0,0);
+  const dow = t.getDay(), gap = dow === 0 ? -6 : 1 - dow;
+  const mon = new Date(t); mon.setDate(t.getDate() + gap + off * 7);
+  return Array.from({length:7}, (_, i) => { const d = new Date(mon); d.setDate(mon.getDate() + i); return d; });
+}
+function taskOnDate(task, ds) {
+  if (!task.rec || task.rec === 'none') return task.date === ds;
+  if (task.date > ds) return false;
+  if (task.rec === 'daily') return true;
+  if (task.rec === 'weekly') return new Date(task.date+'T12:00').getDay() === new Date(ds+'T12:00').getDay();
+  if (task.rec === 'monthly') return task.date.slice(8) === ds.slice(8);
+  return false;
+}
+function doneOn(task, ds) {
+  if (!task.rec || task.rec === 'none') return !!task.done;
+  return (task.doneDates || []).includes(ds);
+}
+function mapTask(t) {
+  return { id:t.id, title:t.title, date:t.date, time:t.time||'', color:t.color||'blue', rec:t.rec||'none', done:!!t.done, doneDates:t.done_dates||[] };
+}
+
+// Schedule notifications for upcoming tasks
+async function scheduleNotifications(tasks) {
+  if (!('Notification' in window) || Notification.permission !== 'granted') return;
+  const now = new Date();
+  const todayStr = toDS(now);
+  tasks.forEach(task => {
+    if (!task.time) return;
+    if (!taskOnDate(task, todayStr)) return;
+    const [h, m] = task.time.split(':').map(Number);
+    const taskTime = new Date(now);
+    taskTime.setHours(h, m, 0, 0);
+    const diff = taskTime - now;
+    const notifyAt = diff - 15 * 60 * 1000; // 15 min before
+    if (notifyAt > 0 && notifyAt < 8 * 60 * 60 * 1000) {
+      setTimeout(() => {
+        new Notification('Upcoming: ' + task.title, {
+          body: 'Starting at ' + task.time,
+          icon: '/icon-192.png',
+          badge: '/icon-192.png'
+        });
+      }, notifyAt);
+    }
+  });
+}
+
+async function requestNotifications() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    await Notification.requestPermission();
+  }
+}
+
+const TODAY = toDS(new Date());
+const BG = '#0f0f1a', CARD = '#1a1a28', BORDER = 'rgba(255,255,255,0.08)', DIM = '#8888a0';
+
+function App() {
+  const [off, setOff] = useState(0);
+  const [tasks, setTasks] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [modal, setModal] = useState(null);
+  const [form, setForm] = useState({ title:'', date:TODAY, time:'', color:'blue', rec:'none' });
+
+  useEffect(() => {
+    loadTasks();
+    requestNotifications();
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
+  }, []);
+
+  async function loadTasks() {
+    setLoading(true);
+    const { data, error } = await db.from('tasks').select('*').order('created_at');
+    if (!error && data) {
+      const mapped = data.map(mapTask);
+      setTasks(mapped);
+      scheduleNotifications(mapped);
+    }
+    setLoading(false);
+  }
+
+  const week = useMemo(() => getWeek(off), [off]);
+  const label = (() => {
+    const a = week[0], b = week[6];
+    if (a.getMonth() === b.getMonth()) return `${MONTHS[a.getMonth()]} ${a.getFullYear()}`;
+    return `${MONTHS[a.getMonth()].slice(0,3)} – ${MONTHS[b.getMonth()].slice(0,3)} ${b.getFullYear()}`;
+  })();
+
+  const pf = useCallback((k, v) => setForm(f => ({...f, [k]: v})), []);
+
+  function openAdd(d) { setForm({title:'', date:toDS(d), time:'', color:'blue', rec:'none'}); setModal('add'); }
+  function openEdit(t) { setForm({title:t.title, date:t.date, time:t.time||'', color:t.color, rec:t.rec||'none'}); setModal({type:'edit', id:t.id}); }
+
+  async function save() {
+    if (!form.title.trim()) return;
+    setSaving(true);
+    if (modal === 'add') {
+      const { data, error } = await db.from('tasks').insert({
+        title:form.title, date:form.date, time:form.time,
+        color:form.color, rec:form.rec, done:false, done_dates:[]
+      }).select().single();
+      if (!error && data) setTasks(p => [...p, mapTask(data)]);
+    } else {
+      await db.from('tasks').update({
+        title:form.title, date:form.date, time:form.time, color:form.color, rec:form.rec
+      }).eq('id', modal.id);
+      setTasks(p => p.map(t => t.id === modal.id ? {...t, ...form} : t));
+    }
+    setSaving(false);
+    setModal(null);
+  }
+
+  async function del() {
+    await db.from('tasks').delete().eq('id', modal.id);
+    setTasks(p => p.filter(t => t.id !== modal.id));
+    setModal(null);
+  }
+
+  async function toggle(tid, ds, e) {
+    e.stopPropagation();
+    const task = tasks.find(t => t.id === tid); if (!task) return;
+    if (!task.rec || task.rec === 'none') {
+      const newDone = !task.done;
+      setTasks(p => p.map(t => t.id === tid ? {...t, done:newDone} : t));
+      await db.from('tasks').update({done:newDone}).eq('id', tid);
+    } else {
+      const dd = task.doneDates || [], has = dd.includes(ds);
+      const newDd = has ? dd.filter(d => d !== ds) : [...dd, ds];
+      setTasks(p => p.map(t => t.id === tid ? {...t, doneDates:newDd} : t));
+      await db.from('tasks').update({done_dates:newDd}).eq('id', tid);
+    }
+  }
+
+  const e = React.createElement;
+
+  return e('div', {style:{position:'relative', background:BG, minHeight:'100vh', color:'#e8e8f0'}},
+    e('div', {style:{display:'flex', alignItems:'center', justifyContent:'space-between', padding:'16px 16px 12px', borderBottom:`0.5px solid ${BORDER}`, position:'sticky', top:0, background:BG, zIndex:10}},
+      e('div', null,
+        e('span', {style:{fontSize:20, fontWeight:600}}, 'My Calendar'),
+        e('span', {style:{fontSize:12, color:DIM, marginLeft:10}}, label)
+      ),
+      e('div', {style:{display:'flex', gap:6, alignItems:'center'}},
+        loading && e('span', {style:{fontSize:11, color:DIM}}, 'syncing…'),
+        e('button', {onClick:()=>setOff(0), style:{fontSize:11, padding:'5px 10px', background:off===0?'rgba(127,119,221,0.2)':'transparent', border:`0.5px solid ${off===0?'rgba(127,119,221,0.5)':BORDER}`, borderRadius:6, color:off===0?'#AFA9EC':DIM, cursor:'pointer'}}, 'Today'),
+        ...['‹','›'].map((ch,i) => e('button', {key:i, onClick:()=>setOff(o=>o+(i===0?-1:1)), style:{width:32, height:32, background:'transparent', border:`0.5px solid ${BORDER}`, borderRadius:6, color:DIM, cursor:'pointer', fontSize:18, display:'flex', alignItems:'center', justifyContent:'center'}}, ch))
+      )
+    ),
+    loading
+      ? e('div', {style:{display:'flex', alignItems:'center', justifyContent:'center', height:300, color:DIM, fontSize:14}}, 'Loading your tasks…')
+      : e('div', {style:{overflowX:'auto', padding:'12px 10px 24px'}},
+          e('div', {style:{display:'grid', gridTemplateColumns:'repeat(7,minmax(0,1fr))', gap:6, minWidth:360}},
+            week.map((date, i) => {
+              const ds = toDS(date), isT = ds === TODAY, isW = i >= 5;
+              const dt = tasks.filter(t => taskOnDate(t, ds));
+              return e('div', {key:ds, style:{background:isW?'rgba(255,255,255,0.02)':CARD, border:isT?'1.5px solid #7F77DD':`0.5px solid ${BORDER}`, borderRadius:10, padding:'8px 5px 30px', minHeight:160, position:'relative'}},
+                e('div', {style:{display:'flex', flexDirection:'column', alignItems:'center', marginBottom:8}},
+                  e('div', {style:{fontSize:9, fontWeight:500, color:isW?'#5577aa':DIM, letterSpacing:.5, textTransform:'uppercase'}}, DAYS[i]),
+                  e('div', {style:{width:26, height:26, borderRadius:'50%', background:isT?'#7F77DD':'transparent', color:isT?'#fff':'#e8e8f0', fontSize:13, fontWeight:isT?600:400, display:'flex', alignItems:'center', justifyContent:'center', marginTop:2}}, date.getDate())
+                ),
+                e('div', {style:{display:'flex', flexDirection:'column', gap:3}},
+                  dt.map(task => {
+                    const col = CMAP[task.color] || CMAP.blue, done = doneOn(task, ds);
+                    return e('div', {key:`${task.id}-${ds}`, onClick:()=>openEdit(task), style:{borderLeft:`3px solid ${col.accent}`, background:`${col.bg}bb`, borderRadius:'0 5px 5px 0', padding:'3px 4px 3px 3px', cursor:'pointer', opacity:done?.4:1, display:'flex', alignItems:'flex-start', gap:4}},
+                      e('div', {onClick:ev=>toggle(task.id,ds,ev), style:{width:11, height:11, borderRadius:2, marginTop:2, border:`1.5px solid ${col.accent}`, background:done?col.accent:'transparent', flexShrink:0, cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center'}},
+                        done && e('span', {style:{color:'#fff', fontSize:8, lineHeight:1}}, '✓')
+                      ),
+                      e('div', {style:{flex:1, minWidth:0}},
+                        e('div', {style:{fontSize:10, fontWeight:500, color:col.text, whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis', textDecoration:done?'line-through':'none'}}, task.title),
+                        task.time && e('div', {style:{fontSize:9, color:`${col.text}88`}}, task.time + (task.rec && task.rec!=='none' ? ' ↻' : ''))
+                      )
+                    );
+                  })
+                ),
+                e('button', {onClick:()=>openAdd(date), style:{position:'absolute', bottom:5, right:5, width:20, height:20, borderRadius:'50%', border:`0.5px solid ${BORDER}`, background:'transparent', color:DIM, cursor:'pointer', fontSize:16, display:'flex', alignItems:'center', justifyContent:'center', padding:0}}, '+')
+              );
+            })
+          )
+        ),
+    modal && e('div', {style:{position:'fixed', top:0, left:0, right:0, bottom:0, background:'rgba(0,0,0,0.8)', display:'flex', alignItems:'flex-end', justifyContent:'center', zIndex:50}},
+      e('div', {style:{background:'#1e1e2e', border:'0.5px solid rgba(255,255,255,0.12)', borderRadius:'16px 16px 0 0', padding:'20px 20px 36px', width:'100%', maxWidth:500}},
+        e('div', {style:{fontSize:15, fontWeight:500, color:'#e8e8f0', marginBottom:16}}, modal==='add'?'Add task':'Edit task'),
+        e('div', {style:{marginBottom:12}},
+          e('label', {style:{fontSize:11, color:DIM, display:'block', marginBottom:4}}, 'Title'),
+          e('input', {type:'text', value:form.title, onChange:ev=>pf('title',ev.target.value), placeholder:'Task name', autoFocus:true})
+        ),
+        e('div', {style:{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:12}},
+          e('div', null,
+            e('label', {style:{fontSize:11, color:DIM, display:'block', marginBottom:4}}, 'Date'),
+            e('input', {type:'date', value:form.date, onChange:ev=>pf('date',ev.target.value)})
+          ),
+          e('div', null,
+            e('label', {style:{fontSize:11, color:DIM, display:'block', marginBottom:4}}, 'Time'),
+            e('input', {type:'time', value:form.time, onChange:ev=>pf('time',ev.target.value)})
+          )
+        ),
+        e('div', {style:{marginBottom:12}},
+          e('label', {style:{fontSize:11, color:DIM, display:'block', marginBottom:8}}, 'Color label'),
+          e('div', {style:{display:'flex', gap:8}},
+            COLORS.map(c => e('div', {key:c.id, onClick:()=>pf('color',c.id), style:{width:26, height:26, borderRadius:7, background:c.accent, cursor:'pointer', border:form.color===c.id?'3px solid #fff':'3px solid transparent'}}))
+          )
+        ),
+        e('div', {style:{marginBottom:20}},
+          e('label', {style:{fontSize:11, color:DIM, display:'block', marginBottom:8}}, 'Repeat'),
+          e('div', {style:{display:'flex', gap:5}},
+            ['none','daily','weekly','monthly'].map(r => e('button', {key:r, onClick:()=>pf('rec',r), style:{flex:1, padding:'7px 0', fontSize:11, cursor:'pointer', background:form.rec===r?'rgba(127,119,221,0.2)':'transparent', border:form.rec===r?'0.5px solid #7F77DD':`0.5px solid ${BORDER}`, borderRadius:7, color:form.rec===r?'#AFA9EC':DIM}}, r[0].toUpperCase()+r.slice(1)))
+          )
+        ),
+        e('div', {style:{display:'flex', gap:8}},
+          modal!=='add' && e('button', {onClick:del, style:{padding:'10px 14px', fontSize:13, border:'0.5px solid rgba(226,75,74,0.4)', borderRadius:8, background:'rgba(226,75,74,0.1)', color:'#F09595', cursor:'pointer'}}, 'Delete'),
+          e('button', {onClick:()=>setModal(null), style:{flex:1, padding:'10px', fontSize:13, border:`0.5px solid ${BORDER}`, borderRadius:8, background:'transparent', color:DIM, cursor:'pointer'}}, 'Cancel'),
+          e('button', {onClick:save, disabled:saving, style:{flex:1, padding:'10px', fontSize:13, border:'none', borderRadius:8, background:'#534AB7', color:'#CECBF6', cursor:'pointer', fontWeight:500, opacity:saving?.6:1}}, saving?'Saving…':'Save')
+        )
+      )
+    )
+  );
+}
+
+ReactDOM.render(React.createElement(App), document.getElementById('root'));
+</script>
+</body>
+</html>
