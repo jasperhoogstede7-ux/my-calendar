@@ -220,7 +220,7 @@ function App(){
   useEffect(()=>{
     loadTasks();
     if('Notification' in window&&Notification.permission==='default') Notification.requestPermission();
-    if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js');
+if('serviceWorker' in navigator) navigator.serviceWorker.getRegistrations().then(regs => regs.forEach(r => r.unregister()));
   },[]);
 
   async function loadTasks(){
